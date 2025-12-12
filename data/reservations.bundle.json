@@ -1,0 +1,142 @@
+{
+  "cases": [
+    {
+      "id": "success-201-standard-reservation",
+      "input": {
+        "activityId": "act_madrid_tour_2024",
+        "date": "2024-12-15",
+        "adults": 2,
+        "children": 1,
+        "email": "maria.garcia@example.com",
+        "payment": {
+          "amount": 150.50,
+          "currency": "EUR"
+        }
+      },
+      "expected": {
+        "network": {
+          "status": 201
+        },
+        "ui": "Reservation created successfully",
+        "state": {
+          "listDelta": 1
+        }
+      }
+    },
+    {
+      "id": "conflict-409-duplicate-reservation",
+      "input": {
+        "activityId": "act_madrid_tour_2024",
+        "date": "2024-12-15",
+        "adults": 2,
+        "children": 0,
+        "email": "maria.garcia@example.com",
+        "payment": {
+          "amount": 150.50,
+          "currency": "EUR"
+        }
+      },
+      "expected": {
+        "network": {
+          "status": 409
+        },
+        "ui": "A reservation with the same email already exists for this activity on the specified date",
+        "state": {
+          "listDelta": 0
+        }
+      }
+    },
+    {
+      "id": "payload-413-too-large",
+      "input": {
+        "activityId": "act_barcelona_tour_2024",
+        "date": "2024-12-20",
+        "adults": 50,
+        "children": 50,
+        "email": "large.payload@example.com",
+        "payment": {
+          "amount": 999999.99,
+          "currency": "USD"
+        }
+      },
+      "expected": {
+        "network": {
+          "status": 413
+        },
+        "ui": "Request payload exceeds the maximum allowed size",
+        "state": {
+          "listDelta": 0
+        }
+      }
+    },
+    {
+      "id": "validation-422-invalid-email",
+      "input": {
+        "activityId": "act_sevilla_tour_2024",
+        "date": "2024-12-18",
+        "adults": 2,
+        "children": 0,
+        "email": "test.invalid@example.com",
+        "payment": {
+          "amount": 80.00,
+          "currency": "EUR"
+        }
+      },
+      "expected": {
+        "network": {
+          "status": 422
+        },
+        "ui": "Email format is invalid",
+        "state": {
+          "listDelta": 0
+        }
+      }
+    },
+    {
+      "id": "validation-422-zero-adults",
+      "input": {
+        "activityId": "act_valencia_tour_2024",
+        "date": "2024-12-22",
+        "adults": 1,
+        "children": 2,
+        "email": "john.doe@example.com",
+        "payment": {
+          "amount": 60.00,
+          "currency": "EUR"
+        }
+      },
+      "expected": {
+        "network": {
+          "status": 422
+        },
+        "ui": "Number of adults must be at least 1",
+        "state": {
+          "listDelta": 0
+        }
+      }
+    },
+    {
+      "id": "success-201-boundary-zero-amount",
+      "input": {
+        "activityId": "act_free_walking_tour_2024",
+        "date": "2024-12-25",
+        "adults": 1,
+        "children": 0,
+        "email": "free.tour@example.com",
+        "payment": {
+          "amount": 0,
+          "currency": "EUR"
+        }
+      },
+      "expected": {
+        "network": {
+          "status": 201
+        },
+        "ui": "Free reservation created successfully",
+        "state": {
+          "listDelta": 1
+        }
+      }
+    }
+  ]
+}

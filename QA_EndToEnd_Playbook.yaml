@@ -1,0 +1,934 @@
+version: "1.1"
+
+metadata:
+  name: "Civitatis QA End-to-End Playbook"
+  description: "Orchestrates complete QA session with mock server, contract tests, UI tests, mutation testing, and PBT"
+  author: "QA Automation Architect"
+  created: "2025-10-23"
+  project: "ejercicio_civitatis"
+
+agents:
+  mock-manager:
+    description: "Manages Prism mock server lifecycle for OpenAPI contract testing"
+    responsibilities:
+      - "Start Prism mock server on port 4010"
+      - "Create .env.mock with BASE_URL configuration"
+      - "Health check mock server availability"
+      - "Stop mock server and cleanup resources"
+    tools:
+      - "npx @stoplight/prism-cli"
+      - "curl for health checks"
+    outputs:
+      - ".env.mock"
+      - "logs/prism.log"
+
+  data-curator:
+    description: "Validates and generates test data bundles using JSON Schema"
+    responsibilities:
+      - "Validate reservations.bundle.json against bundle.schema.json"
+      - "Generate test data variations if needed"
+      - "Export validation results"
+    tools:
+      - "AJV (Ajv + ajv-formats)"
+      - "node tools/validate.mjs"
+    inputs:
+      - "schemas/bundle.schema.json"
+      - "data/reservations.bundle.json"
+    outputs:
+      - "logs/ajv-validation.log"
+      - "reports/data-validation.json"
+
+  contract-runner:
+    description: "Executes Karate contract tests against mock server"
+    responsibilities:
+      - "Run Karate features with mock server BASE_URL"
+      - "Validate API responses against OpenAPI contract"
+      - "Generate JUnit XML reports"
+      - "Export HTML reports"
+    tools:
+      - "Karate standalone JAR (1.4.1+)"
+      - "karate-config.js for configuration"
+    inputs:
+      - "karate/reservations.feature"
+      - "karate/karate-config.js"
+      - ".env.mock (BASE_URL)"
+    outputs:
+      - "reports/karate/karate-summary.html"
+      - "reports/karate/karate.xml"
+      - "logs/karate-run.log"
+
+  ui-runner:
+    description: "Executes WebDriverIO E2E tests with Cucumber BDD"
+    responsibilities:
+      - "Run WDIO features with Chrome DevTools Protocol"
+      - "Capture network traffic and status codes"
+      - "Execute Page Object pattern tests"
+      - "Generate JUnit XML reports"
+    tools:
+      - "WebDriverIO v8"
+      - "Cucumber framework"
+      - "Chrome DevTools Service"
+    inputs:
+      - "wdio/wdio.conf.ts"
+      - "wdio/features/reservation.feature"
+      - "wdio/pages/ReservationPage.ts"
+      - ".env.mock (BASE_URL)"
+    outputs:
+      - "reports/wdio/junit-results.xml"
+      - "reports/wdio/wdio.log"
+      - "logs/wdio-execution.log"
+
+  mutation-runner:
+    description: "Executes mutation testing with Stryker to assess test quality"
+    responsibilities:
+      - "Run Stryker mutation testing on src/utils and src/domain"
+      - "Generate mutation score reports"
+      - "Create actionable findings document"
+      - "Export HTML and JSON reports"
+    tools:
+      - "Stryker Mutator v8.3.0"
+      - "Jest runner"
+      - "TypeScript checker"
+    inputs:
+      - "quality/stryker.conf.json"
+      - "jest.config.ts"
+      - "src/utils/**/*.ts"
+      - "src/domain/**/*.ts"
+      - "tests/unit/**/*.spec.ts"
+    outputs:
+      - "reports/mutation/mutation.html"
+      - "reports/mutation/mutation.json"
+      - "reports/mutation-findings.md"
+      - "logs/stryker-run.log"
+
+  pbt-runner:
+    description: "Executes Property-Based Testing with fast-check"
+    responsibilities:
+      - "Run fast-check properties with deterministic or random seeds"
+      - "Execute PR mode (50 runs, seed 42) or Nightly mode (300 runs, random)"
+      - "Validate business rules with generated test cases"
+      - "Report shrinking results on failures"
+    tools:
+      - "fast-check v4.3.0"
+      - "Jest with ts-jest"
+    inputs:
+      - "quality/pbt.spec.ts"
+      - "jest.config.ts"
+      - "PBT_MODE environment variable (PR|NIGHTLY)"
+      - "PBT_SEED environment variable (optional)"
+    outputs:
+      - "reports/pbt/pbt-results.xml"
+      - "logs/pbt-execution.log"
+      - "reports/pbt/shrinking-cases.json"
+
+  qa-analyzer:
+    description: "Analyzes and correlates all test results to find inconsistencies"
+    responsibilities:
+      - "Parse Karate JUnit XML results"
+      - "Parse WDIO JUnit XML results"
+      - "Compare contract vs UI test outcomes"
+      - "Identify discrepancies in status codes"
+      - "Generate findings checklist"
+      - "Aggregate mutation and PBT scores"
+    tools:
+      - "Custom Node.js analysis script"
+      - "XML parser (fast-xml-parser)"
+    inputs:
+      - "reports/karate/karate.xml"
+      - "reports/wdio/junit-results.xml"
+      - "reports/mutation/mutation.json"
+      - "reports/pbt/pbt-results.xml"
+    outputs:
+      - "reports/findings.md"
+      - "reports/qa-summary.json"
+      - "logs/analyzer.log"
+
+commands:
+  start_mock_server:
+    description: "Start Prism mock server for OpenAPI contract"
+    agent: "mock-manager"
+    steps:
+      - name: "Kill existing Prism processes"
+        command: "pkill -f 'prism mock' || true"
+        timeout: 5000
+
+      - name: "Start Prism in background"
+        command: "npx prism mock openapi/reservations.yaml --port 4010 --host 127.0.0.1 > logs/prism.log 2>&1 &"
+        timeout: 10000
+        background: true
+
+      - name: "Wait for server to start"
+        command: "sleep 3"
+        timeout: 5000
+
+      - name: "Health check mock server"
+        command: "curl -f http://127.0.0.1:4010 || echo 'Mock server starting...'"
+        timeout: 5000
+        retry: 3
+        retry_delay: 2000
+
+      - name: "Create environment file"
+        command: "echo 'BASE_URL=http://127.0.0.1:4010' > .env.mock"
+        timeout: 1000
+
+    outputs:
+      - path: ".env.mock"
+        description: "Environment variables for test runners"
+      - path: "logs/prism.log"
+        description: "Prism server logs"
+
+    validation:
+      - type: "http_check"
+        url: "http://127.0.0.1:4010"
+        expected_status: 404
+        description: "Mock server responds (404 is valid for root endpoint)"
+
+  stop_mock_server:
+    description: "Stop Prism mock server and cleanup"
+    agent: "mock-manager"
+    steps:
+      - name: "Stop Prism process"
+        command: "pkill -f 'prism mock' || true"
+        timeout: 5000
+
+      - name: "Remove environment file"
+        command: "rm -f .env.mock"
+        timeout: 1000
+
+      - name: "Archive logs"
+        command: "[ -f logs/prism.log ] && mv logs/prism.log logs/prism-$(date +%Y%m%d-%H%M%S).log || true"
+        timeout: 2000
+
+    outputs:
+      - path: "logs/prism-*.log"
+        description: "Archived Prism logs"
+
+  create_test_bundle:
+    description: "Validate test data bundle with JSON Schema"
+    agent: "data-curator"
+    steps:
+      - name: "Create logs directory"
+        command: "mkdir -p logs"
+        timeout: 1000
+
+      - name: "Validate bundle with AJV"
+        command: "node tools/validate.mjs > logs/ajv-validation.log 2>&1"
+        timeout: 10000
+
+      - name: "Check validation exit code"
+        command: "node tools/validate.mjs"
+        timeout: 10000
+        exit_code: 0
+
+      - name: "Create validation report"
+        command: |
+          echo '{"status":"success","timestamp":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","schema":"schemas/bundle.schema.json","data":"data/reservations.bundle.json"}' | tee reports/data-validation.json
+        timeout: 2000
+
+    inputs:
+      - "schemas/bundle.schema.json"
+      - "data/reservations.bundle.json"
+      - "tools/validate.mjs"
+
+    outputs:
+      - path: "logs/ajv-validation.log"
+        description: "AJV validation detailed logs"
+      - path: "reports/data-validation.json"
+        description: "Validation summary report"
+
+    validation:
+      - type: "exit_code"
+        expected: 0
+        description: "Bundle validation must pass"
+
+  run_contract_tests:
+    description: "Execute Karate contract tests against mock server"
+    agent: "contract-runner"
+    prerequisites:
+      - "start_mock_server"
+      - "create_test_bundle"
+
+    steps:
+      - name: "Create Karate reports directory"
+        command: "mkdir -p reports/karate logs"
+        timeout: 1000
+
+      - name: "Execute Karate features"
+        command: |
+          java -jar karate.jar \
+            --config-dir karate \
+            karate/reservations.feature \
+            --output reports/karate \
+            > logs/karate-run.log 2>&1 || true
+        timeout: 60000
+
+      - name: "Check Karate results"
+        command: "[ -f reports/karate/karate-summary.html ] && echo 'Karate report generated' || echo 'No report found'"
+        timeout: 2000
+
+    inputs:
+      - "karate/reservations.feature"
+      - "karate/karate-config.js"
+      - ".env.mock"
+
+    outputs:
+      - path: "reports/karate/karate-summary.html"
+        description: "Karate HTML test report"
+      - path: "reports/karate/karate.xml"
+        description: "Karate JUnit XML results"
+      - path: "logs/karate-run.log"
+        description: "Karate execution logs"
+
+    validation:
+      - type: "file_exists"
+        path: "reports/karate/karate-summary.html"
+        description: "Karate report must be generated"
+
+  run_ui_tests:
+    description: "Execute WebDriverIO E2E tests with Cucumber"
+    agent: "ui-runner"
+    prerequisites:
+      - "start_mock_server"
+
+    steps:
+      - name: "Create WDIO reports directory"
+        command: "mkdir -p reports/wdio logs"
+        timeout: 1000
+
+      - name: "Set BASE_URL from mock"
+        command: "export $(cat .env.mock | xargs)"
+        timeout: 1000
+
+      - name: "Execute WDIO tests"
+        command: "npx wdio run wdio/wdio.conf.ts > logs/wdio-execution.log 2>&1 || true"
+        timeout: 180000
+        environment:
+          BASE_URL: "http://127.0.0.1:4010"
+
+      - name: "Archive WDIO logs"
+        command: "[ -f wdio.log ] && cp wdio.log reports/wdio/wdio.log || true"
+        timeout: 2000
+
+    inputs:
+      - "wdio/wdio.conf.ts"
+      - "wdio/features/reservation.feature"
+      - "wdio/pages/ReservationPage.ts"
+      - "wdio/step-definitions/reservation.steps.ts"
+      - ".env.mock"
+
+    outputs:
+      - path: "reports/wdio/junit-results.xml"
+        description: "WDIO JUnit XML results"
+      - path: "reports/wdio/wdio.log"
+        description: "WDIO execution logs"
+      - path: "logs/wdio-execution.log"
+        description: "Console output from WDIO run"
+
+    validation:
+      - type: "file_exists"
+        path: "reports/wdio/junit-results.xml"
+        description: "WDIO must generate JUnit report"
+
+  run_mutation_tests_pr:
+    description: "Execute Stryker mutation testing in PR mode (fast)"
+    agent: "mutation-runner"
+    mode: "PR"
+
+    steps:
+      - name: "Create mutation reports directory"
+        command: "mkdir -p reports/mutation logs"
+        timeout: 1000
+
+      - name: "Run Stryker mutation testing"
+        command: "npm run mutation > logs/stryker-run.log 2>&1 || true"
+        timeout: 300000
+
+      - name: "Check mutation score"
+        command: "grep -A 10 'Mutation score' logs/stryker-run.log | tee -a reports/mutation-findings.md"
+        timeout: 5000
+
+      - name: "Generate findings document"
+        command: |
+          cat <<EOF > reports/mutation-findings.md
+          # Mutation Testing Findings Report
+
+          **Generated:** $(date +%Y-%m-%d)
+          **Mode:** PR (Fast)
+          **Duration:** $(grep 'Done in' logs/stryker-run.log | tail -1 || echo 'N/A')
+
+          ## Executive Summary
+
+          $(grep 'Mutation score' logs/stryker-run.log || echo 'Score not available')
+
+          ## Detailed Results
+
+          \`\`\`
+          $(tail -50 logs/stryker-run.log)
+          \`\`\`
+
+          EOF
+        timeout: 10000
+
+    inputs:
+      - "quality/stryker.conf.json"
+      - "jest.config.ts"
+      - "src/utils/**/*.ts"
+      - "src/domain/**/*.ts"
+      - "tests/unit/**/*.spec.ts"
+
+    outputs:
+      - path: "reports/mutation/mutation.html"
+        description: "Interactive HTML mutation report"
+      - path: "reports/mutation/mutation.json"
+        description: "Machine-readable mutation results"
+      - path: "reports/mutation-findings.md"
+        description: "Human-readable findings and recommendations"
+      - path: "logs/stryker-run.log"
+        description: "Stryker execution logs"
+
+    validation:
+      - type: "file_exists"
+        path: "reports/mutation/mutation.json"
+        description: "Mutation JSON report must exist"
+
+  run_mutation_tests_nightly:
+    description: "Execute Stryker mutation testing in Nightly mode (comprehensive)"
+    agent: "mutation-runner"
+    mode: "NIGHTLY"
+
+    steps:
+      - name: "Create mutation reports directory"
+        command: "mkdir -p reports/mutation logs"
+        timeout: 1000
+
+      - name: "Run Stryker with full coverage"
+        command: "npm run mutation -- --concurrency 8 > logs/stryker-nightly.log 2>&1 || true"
+        timeout: 900000
+
+      - name: "Generate comprehensive findings"
+        command: |
+          cat <<EOF > reports/mutation-findings-nightly.md
+          # Mutation Testing Findings Report (Nightly)
+
+          **Generated:** $(date +%Y-%m-%d)
+          **Mode:** NIGHTLY (Comprehensive)
+          **Duration:** $(grep 'Done in' logs/stryker-nightly.log | tail -1 || echo 'N/A')
+
+          ## Executive Summary
+
+          $(grep 'Mutation score' logs/stryker-nightly.log || echo 'Score not available')
+
+          ## Analysis by File
+
+          $(grep -A 20 '-------' logs/stryker-nightly.log || echo 'Details not available')
+
+          ## Recommendations
+
+          Review reports/mutation/mutation.html for detailed mutant analysis.
+
+          EOF
+        timeout: 10000
+
+    inputs:
+      - "quality/stryker.conf.json"
+      - "jest.config.ts"
+      - "src/**/*.ts"
+      - "tests/**/*.spec.ts"
+
+    outputs:
+      - path: "reports/mutation/mutation.html"
+        description: "Interactive HTML mutation report"
+      - path: "reports/mutation/mutation.json"
+        description: "Machine-readable mutation results"
+      - path: "reports/mutation-findings-nightly.md"
+        description: "Comprehensive nightly findings"
+      - path: "logs/stryker-nightly.log"
+        description: "Nightly execution logs"
+
+  run_pbt:
+    description: "Execute Property-Based Testing with fast-check"
+    agent: "pbt-runner"
+
+    steps:
+      - name: "Create PBT reports directory"
+        command: "mkdir -p reports/pbt logs"
+        timeout: 1000
+
+      - name: "Determine PBT mode"
+        command: "echo ${PBT_MODE:-PR} > logs/pbt-mode.txt"
+        timeout: 1000
+
+      - name: "Set PBT seed"
+        command: "echo ${PBT_SEED:-42} > logs/pbt-seed.txt"
+        timeout: 1000
+
+      - name: "Run fast-check properties"
+        command: "npm run test:pbt > logs/pbt-execution.log 2>&1 || true"
+        timeout: 120000
+        environment:
+          PBT_MODE: "${PBT_MODE:-PR}"
+          PBT_SEED: "${PBT_SEED:-42}"
+
+      - name: "Extract test results"
+        command: "grep -E '(PASS|FAIL|Tests:)' logs/pbt-execution.log | tee reports/pbt/pbt-summary.txt"
+        timeout: 5000
+
+      - name: "Check for shrinking results"
+        command: |
+          if grep -q 'Shrunk' logs/pbt-execution.log; then
+            grep -A 20 'Shrunk' logs/pbt-execution.log > reports/pbt/shrinking-cases.json
+          else
+            echo '{"shrinking": "none"}' > reports/pbt/shrinking-cases.json
+          fi
+        timeout: 5000
+
+    inputs:
+      - "quality/pbt.spec.ts"
+      - "jest.config.ts"
+      - "src/domain/**/*.ts"
+      - "src/utils/**/*.ts"
+
+    outputs:
+      - path: "reports/pbt/pbt-summary.txt"
+        description: "PBT execution summary"
+      - path: "reports/pbt/shrinking-cases.json"
+        description: "Minimal failing cases from shrinking"
+      - path: "logs/pbt-execution.log"
+        description: "Full PBT execution logs"
+
+    environment:
+      PBT_MODE: "PR"
+      PBT_SEED: "42"
+
+    validation:
+      - type: "exit_code_or_log"
+        description: "PBT should complete (may have intentional failures for demo)"
+
+  analyze_results:
+    description: "Correlate all test results and generate findings report"
+    agent: "qa-analyzer"
+    prerequisites:
+      - "run_contract_tests"
+      - "run_ui_tests"
+      - "run_mutation_tests_pr"
+      - "run_pbt"
+
+    steps:
+      - name: "Create analysis workspace"
+        command: "mkdir -p reports/analysis logs"
+        timeout: 1000
+
+      - name: "Parse Karate results"
+        command: |
+          if [ -f reports/karate/karate.xml ]; then
+            echo "Karate tests found" > logs/analyzer.log
+            grep -o 'tests="[0-9]*"' reports/karate/karate.xml | head -1 | cut -d'"' -f2 > reports/analysis/karate-count.txt
+          else
+            echo "0" > reports/analysis/karate-count.txt
+          fi
+        timeout: 5000
+
+      - name: "Parse WDIO results"
+        command: |
+          if [ -f reports/wdio/junit-results.xml ]; then
+            echo "WDIO tests found" >> logs/analyzer.log
+            grep -o 'tests="[0-9]*"' reports/wdio/junit-results.xml | head -1 | cut -d'"' -f2 > reports/analysis/wdio-count.txt
+          else
+            echo "0" > reports/analysis/wdio-count.txt
+          fi
+        timeout: 5000
+
+      - name: "Extract mutation score"
+        command: |
+          if [ -f reports/mutation/mutation.json ]; then
+            echo "Mutation results found" >> logs/analyzer.log
+            grep -o '"mutationScore":[0-9.]*' reports/mutation/mutation.json | head -1 | cut -d':' -f2 > reports/analysis/mutation-score.txt || echo "0" > reports/analysis/mutation-score.txt
+          else
+            echo "0" > reports/analysis/mutation-score.txt
+          fi
+        timeout: 5000
+
+      - name: "Extract PBT results"
+        command: |
+          if [ -f logs/pbt-execution.log ]; then
+            echo "PBT results found" >> logs/analyzer.log
+            grep 'Tests:' logs/pbt-execution.log | tail -1 > reports/analysis/pbt-summary.txt || echo "Tests: N/A" > reports/analysis/pbt-summary.txt
+          else
+            echo "Tests: N/A" > reports/analysis/pbt-summary.txt
+          fi
+        timeout: 5000
+
+      - name: "Generate findings report"
+        command: |
+          cat <<EOF > reports/findings.md
+          # QA Session Findings Report
+
+          **Generated:** $(date '+%Y-%m-%d %H:%M:%S')
+          **Project:** ejercicio_civitatis
+          **Playbook Version:** 1.1
+
+          ---
+
+          ## Executive Summary
+
+          | Test Type | Count/Score | Status |
+          |-----------|-------------|--------|
+          | Contract Tests (Karate) | $(cat reports/analysis/karate-count.txt 2>/dev/null || echo 'N/A') | $([ -f reports/karate/karate.xml ] && echo '✅ Executed' || echo '❌ Not Run') |
+          | UI Tests (WDIO) | $(cat reports/analysis/wdio-count.txt 2>/dev/null || echo 'N/A') | $([ -f reports/wdio/junit-results.xml ] && echo '✅ Executed' || echo '❌ Not Run') |
+          | Mutation Score | $(cat reports/analysis/mutation-score.txt 2>/dev/null || echo 'N/A')% | $([ -f reports/mutation/mutation.json ] && echo '✅ Executed' || echo '❌ Not Run') |
+          | Property-Based Tests | $(cat reports/analysis/pbt-summary.txt 2>/dev/null || echo 'N/A') | $([ -f logs/pbt-execution.log ] && echo '✅ Executed' || echo '❌ Not Run') |
+
+          ---
+
+          ## Test Coverage Analysis
+
+          ### Contract Testing (Karate)
+          - **Location:** reports/karate/karate-summary.html
+          - **Test Count:** $(cat reports/analysis/karate-count.txt 2>/dev/null || echo 'N/A')
+          - **Coverage:** OpenAPI POST /reservations endpoint
+          - **Status Codes Tested:** 201, 409, 413, 422, 401, 403
+
+          ### UI Testing (WebDriverIO)
+          - **Location:** reports/wdio/junit-results.xml
+          - **Test Count:** $(cat reports/analysis/wdio-count.txt 2>/dev/null || echo 'N/A')
+          - **Framework:** Cucumber BDD + Page Object Pattern
+          - **Network Monitoring:** Chrome DevTools Protocol (CDP)
+
+          ### Mutation Testing (Stryker)
+          - **Location:** reports/mutation/mutation.html
+          - **Mutation Score:** $(cat reports/analysis/mutation-score.txt 2>/dev/null || echo 'N/A')%
+          - **Scope:** src/utils/, src/domain/
+          - **Findings:** reports/mutation-findings.md
+
+          ### Property-Based Testing (fast-check)
+          - **Location:** logs/pbt-execution.log
+          - **Results:** $(cat reports/analysis/pbt-summary.txt 2>/dev/null || echo 'N/A')
+          - **Properties Tested:** 5 core + 3 bonus invariants
+          - **Mode:** $(cat logs/pbt-mode.txt 2>/dev/null || echo 'PR')
+          - **Seed:** $(cat logs/pbt-seed.txt 2>/dev/null || echo '42')
+
+          ---
+
+          ## Inconsistencies & Findings
+
+          ### Cross-Tool Validation
+
+          #### Contract vs UI Testing
+          - **Objective:** Verify contract tests (Karate) and UI tests (WDIO) agree on API behavior
+          - **Status:** $([ -f reports/karate/karate.xml ] && [ -f reports/wdio/junit-results.xml ] && echo 'Both executed - manual review recommended' || echo 'Missing results from one or more tools')
+
+          #### Recommended Checks:
+          1. **Status Code Alignment**: Compare Karate expectations vs WDIO CDP captures
+          2. **Response Schema**: Verify UI tests handle all contract-defined error responses
+          3. **Duplicate Detection**: Ensure both tools correctly identify 409 conflicts
+
+          ### Mutation Testing Insights
+          - Review reports/mutation-findings.md for:
+            - Survived mutants (gaps in test coverage)
+            - High timeout rates (performance issues)
+            - Uncovered code paths
+
+          ### Property-Based Testing Insights
+          - Review logs/pbt-execution.log for:
+            - Shrinking results (minimal failing cases)
+            - Edge cases discovered
+            - Boundary condition violations
+
+          ---
+
+          ## Action Items
+
+          ### High Priority
+          - [ ] Review any survived mutants in mutation report
+          - [ ] Verify contract-UI test alignment for status codes
+          - [ ] Address any PBT shrinking failures
+
+          ### Medium Priority
+          - [ ] Improve mutation score if below 80%
+          - [ ] Add missing test cases identified by PBT
+          - [ ] Optimize test execution time
+
+          ### Low Priority
+          - [ ] Enhance reporting dashboards
+          - [ ] Set up CI/CD pipeline integration
+          - [ ] Configure nightly comprehensive runs
+
+          ---
+
+          ## Artifacts
+
+          ### Reports
+          - Contract: [Karate HTML](reports/karate/karate-summary.html)
+          - UI: [WDIO JUnit](reports/wdio/junit-results.xml)
+          - Mutation: [Stryker HTML](reports/mutation/mutation.html)
+          - Findings: [Mutation MD](reports/mutation-findings.md)
+
+          ### Logs
+          - Mock Server: logs/prism.log
+          - Karate: logs/karate-run.log
+          - WDIO: logs/wdio-execution.log
+          - Stryker: logs/stryker-run.log
+          - PBT: logs/pbt-execution.log
+          - Analyzer: logs/analyzer.log
+
+          ---
+
+          ## Summary Statistics
+
+          \`\`\`json
+          {
+            "session_timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "contract_tests": $(cat reports/analysis/karate-count.txt 2>/dev/null || echo '0'),
+            "ui_tests": $(cat reports/analysis/wdio-count.txt 2>/dev/null || echo '0'),
+            "mutation_score": $(cat reports/analysis/mutation-score.txt 2>/dev/null || echo '0'),
+            "pbt_mode": "$(cat logs/pbt-mode.txt 2>/dev/null || echo 'PR')",
+            "pbt_seed": $(cat logs/pbt-seed.txt 2>/dev/null || echo '42'),
+            "playbook_version": "1.1"
+          }
+          \`\`\`
+
+          ---
+
+          **End of Report**
+          EOF
+        timeout: 15000
+
+      - name: "Create JSON summary"
+        command: |
+          cat <<EOF > reports/qa-summary.json
+          {
+            "session_timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "contract_tests": {
+              "count": $(cat reports/analysis/karate-count.txt 2>/dev/null || echo '0'),
+              "executed": $([ -f reports/karate/karate.xml ] && echo 'true' || echo 'false')
+            },
+            "ui_tests": {
+              "count": $(cat reports/analysis/wdio-count.txt 2>/dev/null || echo '0'),
+              "executed": $([ -f reports/wdio/junit-results.xml ] && echo 'true' || echo 'false')
+            },
+            "mutation_testing": {
+              "score": $(cat reports/analysis/mutation-score.txt 2>/dev/null || echo '0'),
+              "executed": $([ -f reports/mutation/mutation.json ] && echo 'true' || echo 'false')
+            },
+            "property_based_testing": {
+              "mode": "$(cat logs/pbt-mode.txt 2>/dev/null || echo 'PR')",
+              "seed": $(cat logs/pbt-seed.txt 2>/dev/null || echo '42'),
+              "executed": $([ -f logs/pbt-execution.log ] && echo 'true' || echo 'false')
+            },
+            "playbook_version": "1.1"
+          }
+          EOF
+        timeout: 5000
+
+    inputs:
+      - "reports/karate/karate.xml"
+      - "reports/wdio/junit-results.xml"
+      - "reports/mutation/mutation.json"
+      - "logs/pbt-execution.log"
+
+    outputs:
+      - path: "reports/findings.md"
+        description: "Comprehensive findings and recommendations report"
+      - path: "reports/qa-summary.json"
+        description: "Machine-readable QA session summary"
+      - path: "logs/analyzer.log"
+        description: "Analysis execution logs"
+      - path: "reports/analysis/"
+        description: "Intermediate analysis artifacts"
+
+    validation:
+      - type: "file_exists"
+        path: "reports/findings.md"
+        description: "Findings report must be generated"
+
+workflows:
+  e2e_mix_tools_with_claude:
+    description: "Complete end-to-end QA workflow with all tools"
+    mode: "sequential"
+
+    steps:
+      - command: "start_mock_server"
+        required: true
+        on_failure: "abort"
+
+      - command: "create_test_bundle"
+        required: true
+        on_failure: "continue"
+
+      - command: "run_contract_tests"
+        required: false
+        on_failure: "continue"
+        depends_on:
+          - "start_mock_server"
+
+      - command: "run_ui_tests"
+        required: false
+        on_failure: "continue"
+        depends_on:
+          - "start_mock_server"
+
+      - command: "run_mutation_tests_pr"
+        required: false
+        on_failure: "continue"
+
+      - command: "run_pbt"
+        required: false
+        on_failure: "continue"
+        environment:
+          PBT_MODE: "PR"
+          PBT_SEED: "42"
+
+      - command: "analyze_results"
+        required: true
+        on_failure: "continue"
+        depends_on:
+          - "run_contract_tests"
+          - "run_ui_tests"
+          - "run_mutation_tests_pr"
+          - "run_pbt"
+
+      - command: "stop_mock_server"
+        required: true
+        on_failure: "continue"
+        always_run: true
+
+    outputs:
+      - "reports/findings.md"
+      - "reports/qa-summary.json"
+      - "reports/mutation-findings.md"
+
+    cleanup:
+      - "stop_mock_server"
+
+  nightly_comprehensive:
+    description: "Comprehensive nightly QA workflow with extended mutation testing"
+    mode: "sequential"
+    schedule: "0 2 * * *"
+
+    steps:
+      - command: "start_mock_server"
+        required: true
+        on_failure: "abort"
+
+      - command: "create_test_bundle"
+        required: true
+        on_failure: "continue"
+
+      - command: "run_contract_tests"
+        required: false
+        on_failure: "continue"
+
+      - command: "run_ui_tests"
+        required: false
+        on_failure: "continue"
+
+      - command: "run_mutation_tests_nightly"
+        required: false
+        on_failure: "continue"
+
+      - command: "run_pbt"
+        required: false
+        on_failure: "continue"
+        environment:
+          PBT_MODE: "NIGHTLY"
+          PBT_SEED: "$(date +%s)"
+
+      - command: "analyze_results"
+        required: true
+        on_failure: "continue"
+
+      - command: "stop_mock_server"
+        required: true
+        always_run: true
+
+    outputs:
+      - "reports/findings.md"
+      - "reports/qa-summary.json"
+      - "reports/mutation-findings-nightly.md"
+
+    cleanup:
+      - "stop_mock_server"
+
+  quick_validation:
+    description: "Quick validation workflow for rapid feedback (contract + PBT only)"
+    mode: "sequential"
+
+    steps:
+      - command: "start_mock_server"
+        required: true
+        on_failure: "abort"
+
+      - command: "create_test_bundle"
+        required: true
+        on_failure: "abort"
+
+      - command: "run_contract_tests"
+        required: true
+        on_failure: "continue"
+
+      - command: "run_pbt"
+        required: true
+        on_failure: "continue"
+        environment:
+          PBT_MODE: "PR"
+          PBT_SEED: "42"
+
+      - command: "stop_mock_server"
+        required: true
+        always_run: true
+
+    outputs:
+      - "reports/karate/karate-summary.html"
+      - "logs/pbt-execution.log"
+
+    cleanup:
+      - "stop_mock_server"
+
+environment:
+  global:
+    NODE_ENV: "test"
+    BASE_URL: "http://127.0.0.1:4010"
+    LOG_LEVEL: "info"
+
+  pr_mode:
+    PBT_MODE: "PR"
+    PBT_SEED: "42"
+    MUTATION_MODE: "pr"
+
+  nightly_mode:
+    PBT_MODE: "NIGHTLY"
+    PBT_SEED: "$(date +%s)"
+    MUTATION_MODE: "nightly"
+
+configuration:
+  directories:
+    reports: "reports"
+    logs: "logs"
+    temp: ".temp"
+
+  cleanup_policy:
+    keep_reports: true
+    keep_logs: true
+    archive_after_days: 30
+
+  notifications:
+    on_success:
+      - type: "log"
+        message: "QA session completed successfully"
+    on_failure:
+      - type: "log"
+        message: "QA session completed with errors"
+        severity: "warning"
+
+  retry_policy:
+    max_retries: 3
+    retry_delay: 5000
+    exponential_backoff: true
+
+  timeouts:
+    default: 60000
+    mock_server_start: 10000
+    contract_tests: 60000
+    ui_tests: 180000
+    mutation_tests: 300000
+    pbt_tests: 120000

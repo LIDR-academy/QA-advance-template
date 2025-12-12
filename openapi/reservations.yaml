@@ -1,0 +1,747 @@
+openapi: 3.0.3
+info:
+  title: Reservations API
+  description: API for managing activity reservations with comprehensive validation and error handling
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: api-support@example.com
+
+servers:
+  - url: https://api.example.com/v1
+    description: Production server
+  - url: https://api-staging.example.com/v1
+    description: Staging server
+  - url: http://localhost:3000/v1
+    description: Local development server
+
+tags:
+  - name: reservations
+    description: Operations related to activity reservations
+
+paths:
+  /reservations:
+    post:
+      tags:
+        - reservations
+      summary: Create a new reservation
+      description: |
+        Creates a new reservation for an activity.
+
+        **Business Rules:**
+        - Duplicate detection is based on the combination of activityId, email, and date
+        - Maximum payload size is 1MB
+        - All required fields must be provided with valid formats
+        - Email must be unique per activity per date
+      operationId: createReservation
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReservationRequest'
+            examples:
+              standard:
+                summary: Standard reservation
+                value:
+                  activityId: "act_madrid_tour_2024"
+                  customerName: "María García López"
+                  email: "maria.garcia@example.com"
+                  phone: "+34612345678"
+                  date: "2024-12-15"
+                  time: "10:00"
+                  numberOfPeople: 2
+                  totalAmount:
+                    value: 89.90
+                    currency: "EUR"
+                  specialRequirements: "Necesito acceso para silla de ruedas"
+                  language: "es"
+              family:
+                summary: Family reservation with children
+                value:
+                  activityId: "act_barcelona_aquarium_2024"
+                  customerName: "John Smith"
+                  email: "john.smith@example.com"
+                  phone: "+447700900123"
+                  date: "2024-12-20"
+                  time: "14:30"
+                  numberOfPeople: 4
+                  totalAmount:
+                    value: 145.00
+                    currency: "EUR"
+                  specialRequirements: "2 adultos y 2 niños (6 y 8 años)"
+                  language: "en"
+                  children:
+                    - age: 6
+                      name: "Emma Smith"
+                    - age: 8
+                      name: "Oliver Smith"
+              vip:
+                summary: VIP tour reservation
+                value:
+                  activityId: "act_toledo_private_tour_2024"
+                  customerName: "Sophie Dubois"
+                  email: "sophie.dubois@example.fr"
+                  phone: "+33612345678"
+                  date: "2024-12-25"
+                  time: "09:00"
+                  numberOfPeople: 6
+                  totalAmount:
+                    value: 450.00
+                    currency: "EUR"
+                  specialRequirements: "Tour privado, guía en francés, incluir almuerzo"
+                  language: "fr"
+                  vipService: true
+                  dietaryRestrictions:
+                    - "vegetarian"
+                    - "gluten-free"
+      responses:
+        '201':
+          description: Reservation created successfully
+          headers:
+            Location:
+              description: URI of the created reservation
+              schema:
+                type: string
+                format: uri
+                example: "/v1/reservations/res_a1b2c3d4e5f6"
+            X-Request-ID:
+              description: Unique request identifier for tracking
+              schema:
+                type: string
+                format: uuid
+                example: "550e8400-e29b-41d4-a716-446655440000"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservationResponse'
+              examples:
+                created:
+                  summary: Successfully created reservation
+                  value:
+                    id: "res_a1b2c3d4e5f6"
+                    activityId: "act_madrid_tour_2024"
+                    activityName: "Madrid City Walking Tour"
+                    customerName: "María García López"
+                    email: "maria.garcia@example.com"
+                    phone: "+34612345678"
+                    date: "2024-12-15"
+                    time: "10:00"
+                    numberOfPeople: 2
+                    totalAmount:
+                      value: 89.90
+                      currency: "EUR"
+                    status: "confirmed"
+                    confirmationCode: "CONF-2024-MD-7821"
+                    specialRequirements: "Necesito acceso para silla de ruedas"
+                    language: "es"
+                    createdAt: "2024-10-23T14:30:00Z"
+                    updatedAt: "2024-10-23T14:30:00Z"
+                    qrCode: "https://api.example.com/v1/reservations/res_a1b2c3d4e5f6/qr"
+                    links:
+                      self: "/v1/reservations/res_a1b2c3d4e5f6"
+                      cancel: "/v1/reservations/res_a1b2c3d4e5f6/cancel"
+                      modify: "/v1/reservations/res_a1b2c3d4e5f6"
+                      activity: "/v1/activities/act_madrid_tour_2024"
+
+        '401':
+          description: Unauthorized - Missing or invalid authentication token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missingToken:
+                  summary: Missing authentication token
+                  value:
+                    error:
+                      code: "AUTH_TOKEN_MISSING"
+                      message: "Authentication token is required"
+                      timestamp: "2024-10-23T14:30:00Z"
+                      requestId: "550e8400-e29b-41d4-a716-446655440000"
+                      path: "/v1/reservations"
+                invalidToken:
+                  summary: Invalid or expired token
+                  value:
+                    error:
+                      code: "AUTH_TOKEN_INVALID"
+                      message: "The provided authentication token is invalid or expired"
+                      timestamp: "2024-10-23T14:30:00Z"
+                      requestId: "550e8400-e29b-41d4-a716-446655440000"
+                      path: "/v1/reservations"
+
+        '403':
+          description: Forbidden - Insufficient permissions to create reservation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                insufficientPermissions:
+                  summary: User lacks required permissions
+                  value:
+                    error:
+                      code: "INSUFFICIENT_PERMISSIONS"
+                      message: "You do not have permission to create reservations for this activity"
+                      timestamp: "2024-10-23T14:30:00Z"
+                      requestId: "550e8400-e29b-41d4-a716-446655440000"
+                      path: "/v1/reservations"
+                      details:
+                        requiredRole: "BOOKING_AGENT"
+                        currentRole: "VIEWER"
+                accountSuspended:
+                  summary: Account suspended
+                  value:
+                    error:
+                      code: "ACCOUNT_SUSPENDED"
+                      message: "Your account has been suspended. Please contact support."
+                      timestamp: "2024-10-23T14:30:00Z"
+                      requestId: "550e8400-e29b-41d4-a716-446655440000"
+                      path: "/v1/reservations"
+                      details:
+                        suspensionReason: "Payment issues"
+                        contactEmail: "support@example.com"
+
+        '409':
+          description: Conflict - Duplicate reservation detected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                duplicateReservation:
+                  summary: Duplicate reservation for same activity, email and date
+                  value:
+                    error:
+                      code: "DUPLICATE_RESERVATION"
+                      message: "A reservation with the same email already exists for this activity on the specified date"
+                      timestamp: "2024-10-23T14:30:00Z"
+                      requestId: "550e8400-e29b-41d4-a716-446655440000"
+                      path: "/v1/reservations"
+                      details:
+                        conflictingFields:
+                          - activityId
+                          - email
+                          - date
+                        existingReservationId: "res_x9y8z7w6v5u4"
+                        existingReservationDate: "2024-12-15"
+                        suggestedAction: "Use the existing reservation or choose a different date"
+                        alternativeDates:
+                          - "2024-12-16"
+                          - "2024-12-17"
+                          - "2024-12-18"
+
+        '413':
+          description: Payload Too Large - Request body exceeds maximum allowed size
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                payloadTooLarge:
+                  summary: Request payload exceeds 1MB limit
+                  value:
+                    error:
+                      code: "PAYLOAD_TOO_LARGE"
+                      message: "Request payload exceeds the maximum allowed size of 1MB"
+                      timestamp: "2024-10-23T14:30:00Z"
+                      requestId: "550e8400-e29b-41d4-a716-446655440000"
+                      path: "/v1/reservations"
+                      details:
+                        maxSizeBytes: 1048576
+                        actualSizeBytes: 1536000
+                        recommendation: "Reduce the size of attachments or special requirements text"
+
+        '422':
+          description: Unprocessable Entity - Validation errors in request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+              examples:
+                missingRequiredFields:
+                  summary: Missing required fields
+                  value:
+                    error:
+                      code: "VALIDATION_ERROR"
+                      message: "Request validation failed"
+                      timestamp: "2024-10-23T14:30:00Z"
+                      requestId: "550e8400-e29b-41d4-a716-446655440000"
+                      path: "/v1/reservations"
+                      validationErrors:
+                        - field: "email"
+                          message: "Email is required"
+                          code: "FIELD_REQUIRED"
+                        - field: "activityId"
+                          message: "Activity ID is required"
+                          code: "FIELD_REQUIRED"
+                        - field: "date"
+                          message: "Date is required"
+                          code: "FIELD_REQUIRED"
+                invalidFormats:
+                  summary: Invalid field formats
+                  value:
+                    error:
+                      code: "VALIDATION_ERROR"
+                      message: "Request validation failed"
+                      timestamp: "2024-10-23T14:30:00Z"
+                      requestId: "550e8400-e29b-41d4-a716-446655440000"
+                      path: "/v1/reservations"
+                      validationErrors:
+                        - field: "email"
+                          message: "Email format is invalid"
+                          code: "INVALID_FORMAT"
+                          rejectedValue: "invalid-email"
+                          expectedFormat: "user@example.com"
+                        - field: "phone"
+                          message: "Phone number must include country code (E.164 format)"
+                          code: "INVALID_FORMAT"
+                          rejectedValue: "612345678"
+                          expectedFormat: "+34612345678"
+                        - field: "date"
+                          message: "Date must be in ISO 8601 format (YYYY-MM-DD)"
+                          code: "INVALID_FORMAT"
+                          rejectedValue: "15/12/2024"
+                          expectedFormat: "2024-12-15"
+                businessRuleViolations:
+                  summary: Business rule violations
+                  value:
+                    error:
+                      code: "VALIDATION_ERROR"
+                      message: "Request validation failed"
+                      timestamp: "2024-10-23T14:30:00Z"
+                      requestId: "550e8400-e29b-41d4-a716-446655440000"
+                      path: "/v1/reservations"
+                      validationErrors:
+                        - field: "date"
+                          message: "Reservation date must be in the future"
+                          code: "PAST_DATE_NOT_ALLOWED"
+                          rejectedValue: "2024-01-01"
+                        - field: "numberOfPeople"
+                          message: "Number of people must be between 1 and 50"
+                          code: "OUT_OF_RANGE"
+                          rejectedValue: 0
+                          allowedRange:
+                            min: 1
+                            max: 50
+                        - field: "totalAmount.value"
+                          message: "Amount must be a positive number"
+                          code: "INVALID_VALUE"
+                          rejectedValue: -50.00
+                        - field: "activityId"
+                          message: "Activity does not exist or is no longer available"
+                          code: "RESOURCE_NOT_FOUND"
+                          rejectedValue: "act_invalid_123"
+                invalidChildren:
+                  summary: Invalid children data
+                  value:
+                    error:
+                      code: "VALIDATION_ERROR"
+                      message: "Request validation failed"
+                      timestamp: "2024-10-23T14:30:00Z"
+                      requestId: "550e8400-e29b-41d4-a716-446655440000"
+                      path: "/v1/reservations"
+                      validationErrors:
+                        - field: "children[0].age"
+                          message: "Child age must be between 0 and 17"
+                          code: "OUT_OF_RANGE"
+                          rejectedValue: 25
+                        - field: "children[1].name"
+                          message: "Child name is required when children are specified"
+                          code: "FIELD_REQUIRED"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from the authentication endpoint
+
+  schemas:
+    CreateReservationRequest:
+      type: object
+      required:
+        - activityId
+        - customerName
+        - email
+        - date
+        - numberOfPeople
+        - totalAmount
+      properties:
+        activityId:
+          type: string
+          description: Unique identifier of the activity to reserve
+          pattern: '^act_[a-z0-9_]+$'
+          minLength: 5
+          maxLength: 100
+          example: "act_madrid_tour_2024"
+        customerName:
+          type: string
+          description: Full name of the customer making the reservation
+          minLength: 2
+          maxLength: 200
+          example: "María García López"
+        email:
+          type: string
+          format: email
+          description: Customer's email address for confirmation and communications
+          maxLength: 254
+          example: "maria.garcia@example.com"
+        phone:
+          type: string
+          description: Customer's phone number in E.164 format (with country code)
+          pattern: '^\+[1-9]\d{1,14}$'
+          example: "+34612345678"
+        date:
+          type: string
+          format: date
+          description: Date of the activity reservation (ISO 8601 format)
+          example: "2024-12-15"
+        time:
+          type: string
+          description: Time of the activity in HH:mm format (24-hour)
+          pattern: '^([01]\d|2[0-3]):([0-5]\d)$'
+          example: "10:00"
+        numberOfPeople:
+          type: integer
+          description: Total number of participants
+          minimum: 1
+          maximum: 50
+          example: 2
+        totalAmount:
+          $ref: '#/components/schemas/Money'
+        specialRequirements:
+          type: string
+          description: Any special requirements or notes for the reservation
+          maxLength: 2000
+          example: "Necesito acceso para silla de ruedas"
+        language:
+          type: string
+          description: Preferred language for the activity (ISO 639-1 code)
+          pattern: '^[a-z]{2}$'
+          enum: [es, en, fr, de, it, pt, ca]
+          default: "en"
+          example: "es"
+        children:
+          type: array
+          description: Information about children in the reservation (if applicable)
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/Child'
+        vipService:
+          type: boolean
+          description: Request VIP service upgrade
+          default: false
+          example: false
+        dietaryRestrictions:
+          type: array
+          description: Dietary restrictions or allergies (if food is included)
+          maxItems: 10
+          items:
+            type: string
+            enum:
+              - vegetarian
+              - vegan
+              - gluten-free
+              - dairy-free
+              - nut-allergy
+              - halal
+              - kosher
+          example: ["vegetarian", "gluten-free"]
+        promoCode:
+          type: string
+          description: Promotional or discount code
+          pattern: '^[A-Z0-9]{4,20}$'
+          example: "SUMMER2024"
+
+    ReservationResponse:
+      type: object
+      required:
+        - id
+        - activityId
+        - activityName
+        - customerName
+        - email
+        - date
+        - numberOfPeople
+        - totalAmount
+        - status
+        - confirmationCode
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          description: Unique identifier of the reservation
+          pattern: '^res_[a-z0-9]+$'
+          example: "res_a1b2c3d4e5f6"
+        activityId:
+          type: string
+          description: Identifier of the reserved activity
+          example: "act_madrid_tour_2024"
+        activityName:
+          type: string
+          description: Name of the reserved activity
+          example: "Madrid City Walking Tour"
+        customerName:
+          type: string
+          description: Customer's full name
+          example: "María García López"
+        email:
+          type: string
+          format: email
+          description: Customer's email address
+          example: "maria.garcia@example.com"
+        phone:
+          type: string
+          description: Customer's phone number
+          example: "+34612345678"
+        date:
+          type: string
+          format: date
+          description: Date of the activity
+          example: "2024-12-15"
+        time:
+          type: string
+          description: Time of the activity
+          pattern: '^([01]\d|2[0-3]):([0-5]\d)$'
+          example: "10:00"
+        numberOfPeople:
+          type: integer
+          description: Number of participants
+          example: 2
+        totalAmount:
+          $ref: '#/components/schemas/Money'
+        status:
+          type: string
+          description: Current status of the reservation
+          enum: [pending, confirmed, cancelled, completed, no-show]
+          example: "confirmed"
+        confirmationCode:
+          type: string
+          description: Unique confirmation code for the reservation
+          pattern: '^CONF-\d{4}-[A-Z]{2}-\d{4}$'
+          example: "CONF-2024-MD-7821"
+        specialRequirements:
+          type: string
+          description: Special requirements or notes
+          example: "Necesito acceso para silla de ruedas"
+        language:
+          type: string
+          description: Language preference
+          example: "es"
+        children:
+          type: array
+          items:
+            $ref: '#/components/schemas/Child'
+        vipService:
+          type: boolean
+          description: Whether VIP service was requested
+          example: false
+        dietaryRestrictions:
+          type: array
+          items:
+            type: string
+          example: ["vegetarian"]
+        createdAt:
+          type: string
+          format: date-time
+          description: Timestamp when the reservation was created
+          example: "2024-10-23T14:30:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          description: Timestamp when the reservation was last updated
+          example: "2024-10-23T14:30:00Z"
+        qrCode:
+          type: string
+          format: uri
+          description: URL to the QR code for the reservation
+          example: "https://api.example.com/v1/reservations/res_a1b2c3d4e5f6/qr"
+        links:
+          type: object
+          description: HATEOAS links for related operations
+          properties:
+            self:
+              type: string
+              format: uri-reference
+              example: "/v1/reservations/res_a1b2c3d4e5f6"
+            cancel:
+              type: string
+              format: uri-reference
+              example: "/v1/reservations/res_a1b2c3d4e5f6/cancel"
+            modify:
+              type: string
+              format: uri-reference
+              example: "/v1/reservations/res_a1b2c3d4e5f6"
+            activity:
+              type: string
+              format: uri-reference
+              example: "/v1/activities/act_madrid_tour_2024"
+
+    Money:
+      type: object
+      required:
+        - value
+        - currency
+      properties:
+        value:
+          type: number
+          format: double
+          description: Monetary amount (supports up to 2 decimal places)
+          minimum: 0
+          example: 89.90
+        currency:
+          type: string
+          description: ISO 4217 currency code
+          pattern: '^[A-Z]{3}$'
+          enum: [EUR, USD, GBP, JPY, CHF, CAD, AUD]
+          example: "EUR"
+
+    Child:
+      type: object
+      required:
+        - age
+        - name
+      properties:
+        age:
+          type: integer
+          description: Age of the child
+          minimum: 0
+          maximum: 17
+          example: 8
+        name:
+          type: string
+          description: Name of the child
+          minLength: 2
+          maxLength: 100
+          example: "Emma Smith"
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+            - timestamp
+            - requestId
+            - path
+          properties:
+            code:
+              type: string
+              description: Machine-readable error code
+              example: "DUPLICATE_RESERVATION"
+            message:
+              type: string
+              description: Human-readable error message
+              example: "A reservation with the same email already exists for this activity on the specified date"
+            timestamp:
+              type: string
+              format: date-time
+              description: Timestamp when the error occurred
+              example: "2024-10-23T14:30:00Z"
+            requestId:
+              type: string
+              format: uuid
+              description: Unique identifier for the request (for support and debugging)
+              example: "550e8400-e29b-41d4-a716-446655440000"
+            path:
+              type: string
+              description: API path where the error occurred
+              example: "/v1/reservations"
+            details:
+              type: object
+              description: Additional error details (structure varies by error type)
+              additionalProperties: true
+
+    ValidationErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+            - timestamp
+            - requestId
+            - path
+            - validationErrors
+          properties:
+            code:
+              type: string
+              description: Machine-readable error code
+              example: "VALIDATION_ERROR"
+            message:
+              type: string
+              description: Human-readable error message
+              example: "Request validation failed"
+            timestamp:
+              type: string
+              format: date-time
+              description: Timestamp when the error occurred
+              example: "2024-10-23T14:30:00Z"
+            requestId:
+              type: string
+              format: uuid
+              description: Unique identifier for the request
+              example: "550e8400-e29b-41d4-a716-446655440000"
+            path:
+              type: string
+              description: API path where the error occurred
+              example: "/v1/reservations"
+            validationErrors:
+              type: array
+              description: List of validation errors
+              minItems: 1
+              items:
+                type: object
+                required:
+                  - field
+                  - message
+                  - code
+                properties:
+                  field:
+                    type: string
+                    description: Name of the field that failed validation
+                    example: "email"
+                  message:
+                    type: string
+                    description: Detailed validation error message
+                    example: "Email format is invalid"
+                  code:
+                    type: string
+                    description: Machine-readable validation error code
+                    enum:
+                      - FIELD_REQUIRED
+                      - INVALID_FORMAT
+                      - INVALID_VALUE
+                      - OUT_OF_RANGE
+                      - RESOURCE_NOT_FOUND
+                      - PAST_DATE_NOT_ALLOWED
+                    example: "INVALID_FORMAT"
+                  rejectedValue:
+                    description: The value that was rejected
+                    example: "invalid-email"
+                  expectedFormat:
+                    type: string
+                    description: Expected format for the field
+                    example: "user@example.com"
+                  allowedRange:
+                    type: object
+                    description: Allowed range for numeric fields
+                    properties:
+                      min:
+                        type: number
+                        example: 1
+                      max:
+                        type: number
+                        example: 50

@@ -1,0 +1,134 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://example.com/schemas/bundle.schema.json",
+  "title": "Test Bundle Schema",
+  "description": "JSON Schema for test case bundles with input, expected network responses, UI state, and application state",
+  "type": "object",
+  "required": ["cases"],
+  "properties": {
+    "cases": {
+      "type": "array",
+      "description": "Array of test cases",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/TestCase"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "TestCase": {
+      "type": "object",
+      "required": ["id", "input", "expected"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the test case",
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "input": {
+          "$ref": "#/$defs/TestInput"
+        },
+        "expected": {
+          "$ref": "#/$defs/TestExpected"
+        }
+      },
+      "additionalProperties": false
+    },
+    "TestInput": {
+      "type": "object",
+      "required": ["activityId", "date", "adults", "children", "email", "payment"],
+      "properties": {
+        "activityId": {
+          "type": "string",
+          "description": "Identifier of the activity to reserve",
+          "minLength": 1
+        },
+        "date": {
+          "type": "string",
+          "description": "Date of the reservation in YYYY-MM-DD format",
+          "format": "date",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "adults": {
+          "type": "integer",
+          "description": "Number of adults",
+          "minimum": 1
+        },
+        "children": {
+          "type": "integer",
+          "description": "Number of children",
+          "minimum": 0
+        },
+        "email": {
+          "type": "string",
+          "description": "Customer email address",
+          "format": "email",
+          "pattern": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$"
+        },
+        "payment": {
+          "$ref": "#/$defs/Payment"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Payment": {
+      "type": "object",
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "number",
+          "description": "Payment amount",
+          "minimum": 0
+        },
+        "currency": {
+          "type": "string",
+          "description": "ISO 4217 currency code",
+          "pattern": "^[A-Z]{3}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "TestExpected": {
+      "type": "object",
+      "required": ["network", "ui", "state"],
+      "properties": {
+        "network": {
+          "$ref": "#/$defs/NetworkExpectation"
+        },
+        "ui": {
+          "type": "string",
+          "description": "Expected UI state or message"
+        },
+        "state": {
+          "$ref": "#/$defs/StateExpectation"
+        }
+      },
+      "additionalProperties": false
+    },
+    "NetworkExpectation": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "integer",
+          "description": "Expected HTTP status code",
+          "enum": [201, 401, 403, 409, 413, 422]
+        }
+      },
+      "additionalProperties": false
+    },
+    "StateExpectation": {
+      "type": "object",
+      "required": ["listDelta"],
+      "properties": {
+        "listDelta": {
+          "type": "integer",
+          "description": "Expected change in list count (positive for additions, negative for deletions, zero for no change)"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
